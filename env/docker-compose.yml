@@ -1,0 +1,50 @@
+services:
+
+  nginx:
+    container_name: monitor.nginx
+    image: nginx:latest
+    build: './nginx/'
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - php
+    volumes:
+      - ./nginx:/etc/nginx/conf.d
+      - ./nginx/certs:/etc/nginx/certs
+      - ./..:/var/www/html
+    restart: unless-stopped
+
+  php:
+    container_name: monitor.php
+    image: php:8.2-fpm
+    build: './php/'
+    extra_hosts:
+     - "host.docker.internal:host-gateway"
+    expose:
+       - 9000
+    environment:
+      XDEBUG_MODE: debug
+      XDEBUG_CONFIG: client_host=host.docker.internal client_port=9003
+    volumes:
+      - ./..:/var/www/html
+    restart: unless-stopped
+
+  mariadb:
+    container_name: monitor.mariadb
+    #build: './mariadb/'
+    image: mariadb:latest
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    environment:
+      - MARIADB_DATABASE=${MARIADB_DATABASE}
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MARIADB_USER=${MARIADB_USER}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD}
+    restart: unless-stopped
+
+volumes:
+  mariadb_data:
+
+
+
