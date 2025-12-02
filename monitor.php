@@ -1,160 +1,105 @@
 <?php
 declare(strict_types=1);
 
-/**
- * Get status icon based on HTTP code
- */
-function getStatusIcon(int $code): string
-{
-    return match (true) {
-        $code >= 200 && $code < 300 => '✅',
-        $code >= 300 && $code < 400 => '🔄',
-        $code >= 400 && $code < 500 => '⚠️',
-        $code >= 500 => '❌',
-        default => '❓'
-    };
-}
+require_once 'index.php';
 
-/**
- * Get status text based on HTTP code
- */
-function getStatusText(int $code): string
-{
-    return match (true) {
-        $code >= 200 && $code < 300 => 'OK',
-        $code >= 300 && $code < 400 => 'Redirect',
-        $code >= 400 && $code < 500 => 'Client Error',
-        $code >= 500 => 'Server Error',
-        default => 'Unknown'
-    };
-}
+use Lib\MonitorService;
+use Model\Website;
 
-/**
- * Check website availability and response time
- */
-function checkWebsite(string $url): array
-{
-    $startTime = microtime(true);
-    
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HEADER, true);
-    curl_setopt($ch, CURLOPT_NOBODY, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    
-    curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $totalTime = microtime(true) - $startTime;
-    
-    curl_close($ch);
-    
-    return ['url' => $url, 'code' => $httpCode, 'time' => $totalTime];
-}
-
-/**
- * Check service availability via socket connection
- */
-function checkService(string $host, int $port, int $timeout = 5): array
-{
-    $startTime = microtime(true);
-    $result = 1;
-    $response = null;
-    
-    $fp = fsockopen($host, $port, $errno, $errstr, $timeout);
-
-    if ($fp) {
-        $result = 0;
-        $response = fgets($fp, 1024);
-        fclose($fp);
-    }
-    
-    $totalTime = microtime(true) - $startTime;
-    
-    return [
-        'host' => $host,
-        'port' => $port,
-        'code' => $result,
-        'time' => $totalTime,
-        'response' => $response
-    ];
-}
-
-/**
- * Check multiple websites concurrently using cURL multi
- */
-function checkWebsitesConcurrent(array $urls): array
-{
-    $mh = curl_multi_init();
-    $handles = [];
-    $results = [];
-    
-    // Initialize all requests
-    foreach ($urls as $url) {
-        $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_HEADER, true);
-        curl_setopt($ch, CURLOPT_NOBODY, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        
-        curl_multi_add_handle($mh, $ch);
-        $handles[$url] = $ch;
-    }
-    
-    // Execute all requests
-    $running = null;
-    do {
-        curl_multi_exec($mh, $running);
-    } while ($running > 0);
-    
-    // Collect results
-    foreach ($handles as $url => $ch) {
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $totalTime = curl_getinfo($ch, CURLINFO_TOTAL_TIME);
-        
-        $results[] = ['url' => $url, 'code' => $httpCode, 'time' => $totalTime];
-        curl_multi_remove_handle($mh, $ch);
-        curl_close($ch);
-    }
-    
-    curl_multi_close($mh);
-    
-    return $results;
-}
-
-// Monitor websites concurrently
-$websites = [
-    'https://new.tec-point.de',
-    'https://app.insystec.de/timemaster',
-    'https://hr.tec-point.de',
-    'https://service.tec-point.de',
-    'https://laser.tec-point.de'
+// Example websites (in production, load from database)
+$websitesData = [
+    ['id' => 1, 'name' => 'TEC Point Main', 'url' => 'https://new.tec-point.de', 'timeout' => 10],
+    ['id' => 2, 'name' => 'TimeMaster App', 'url' => 'https://app.insystec.de/timemaster', 'timeout' => 10],
+    ['id' => 3, 'name' => 'HR System', 'url' => 'https://hr.tec-point.de', 'timeout' => 10],
+    ['id' => 4, 'name' => 'Service Portal', 'url' => 'https://service.tec-point.de', 'timeout' => 10],
+    ['id' => 5, 'name' => 'Laser System', 'url' => 'https://laser.tec-point.de', 'timeout' => 10],
 ];
 
-$results = checkWebsitesConcurrent($websites);
+// Convert to Website objects
+$websites = array_map(fn($data) => Website::fromArray($data), $websitesData);
 
-echo "<style>
-    body { font-family: Arial, sans-serif; }
-    .status-row { padding: 10px; margin: 5px 0; border-radius: 5px; }
-    .ok { background-color: #d4edda; }
-    .error { background-color: #f8d7da; }
-</style>";
+// Run monitoring
+$results = MonitorService::checkWebsitesConcurrent($websites);
 
-foreach ($results as $result) {
-    $icon = getStatusIcon($result['code']);
-    $status = getStatusText($result['code']);
-    $isOk = $result['code'] >= 200 && $result['code'] < 300;
-    $class = $isOk ? 'ok' : 'error';
-    
-    echo sprintf(
-        "<div class='status-row %s'>%s %s | Status: %s (%d) | Time: %.2fs</div>",
-        $class,
-        $icon,
-        $result['url'],
-        $status,
-        $result['code'],
-        $result['time']
-    );
-}
+// Display results
 ?>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Monitor - Website Status</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+        }
+        .status-row {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .ok {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }
+        .redirect {
+            border-left-color: #ffc107;
+            background-color: #fff3cd;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+        }
+        .icon {
+            font-size: 1.5em;
+            margin-right: 10px;
+        }
+        .info {
+            margin-top: 8px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .timestamp {
+            font-size: 0.85em;
+            color: #999;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Website Monitor</h1>
+        
+        <?php foreach ($results as $result): ?>
+            <?php
+                $class = $result->isOk() ? 'ok' : ($result->getStatus() === 'Redirect' ? 'redirect' : 'error');
+            ?>
+            <div class="status-row <?php echo $class; ?>">
+                <strong>
+                    <span class="icon"><?php echo $result->getIcon(); ?></span>
+                    <?php echo htmlspecialchars($result->getName()); ?>
+                </strong>
+                <div class="info">
+                    <strong>URL:</strong> <?php echo htmlspecialchars($result->getUrl()); ?><br>
+                    <strong>Status:</strong> <?php echo $result->getStatus(); ?> (<?php echo $result->getHttpCode(); ?>) | 
+                    <strong>Response Time:</strong> <?php echo number_format($result->getResponseTime(), 2); ?>s
+                </div>
+                <div class="timestamp">
+                    Checked: <?php echo $result->getTimestamp(); ?>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</body>
+</html>
